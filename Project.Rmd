@@ -9,3 +9,120 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+This project focuses on using data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal of your project is to predict the manner in which they did the exercise. The datasets are privided below. 
+
+
+   + [Training](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+   + [Testing](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+In the dataset, `classe` is the variable we will try to predict according to the following guidelines:
+
+  + A: exactly according to the specification
+  + B: throwing the elbows to the front
+  + C: lifting the dumbbell only halfway
+  + D: lowering the dumbbell only halfway
+  + E: throwing the hips to the front
+
+```{r load-packages, message=FALSE, warning=FALSE}
+# Load libraries
+library(ggplot2)
+library(caret)
+library(corrplot)
+
+# Load datasets
+training <- read.csv("pml-training.csv", na.strings = "")
+validating <- read.csv("pml-testing.csv", na.strings = "")
+```
+## Cleaning data
+
+Before any fancy algorithm implementation we need to clean the data and remove all the non-significant variables from both training and testing data sets. For removing the non-significant variables we can use `nonZeroVar` function, which diagnoses predictors that have one unique value (i.e. are zero variance predictors). Then we could use an `apply` family function in order to identify those variables that are mostly NA values. On the oder hand, the fisrt 5 columns are descriptive information for each observation, we will need to remove them as well. 
+
+```{r cleaning-data}
+# Removing non-significant variables from the datasets
+non_var <- nearZeroVar(training)
+training <- training[,-non_var]; validating <- validating[,-non_var]
+
+# Removing those variables that are mostly NA values
+NA_var <- sapply(training, FUN = function(x) {mean(is.na(x))}) < 0.6
+training <- training[,NA_var]
+validating <- validating[,NA_var]
+
+# Removing variables regarding label or identification
+training <- training[, -(1:5)]
+validating <- validating[, -(1:5)]
+
+# Create a factor 
+training$classe <- as.factor(training$classe)
+
+# Create the testing set
+inTrain  <- createDataPartition(training$classe, p=0.7, list=FALSE)
+training <- training[inTrain, ]
+testing  <- training[-inTrain, ]
+```
+
+## Exploratory Data Analysis 
+
+Since we have numeric variables, we can perform a correlation matrix and then use `corrplot` function in order to graphically display of a correlation matrix. The most highly correlated variables are shown as intense tones; while the colors are in function of direction; blue for directly proportional and red for inversely proportional.
+
+```{r correlogram}
+# Create correlation matrix
+correlogram <- cor(training[,-which(names(training) == 'classe')])
+
+# Create correlogram
+corrplot(correlogram, order = "FPC", method = "color", type = "upper", 
+         tl.cex = 0.5, tl.col = rgb(0, 0, 0))
+```
+
+## Processing Data
+
+```{r summarizing-ranges}
+set.seed(164)
+# Create a function to calculate the range and take a sample of 15 observations
+ranges <- sample(sapply(training[,-54], FUN = function(x) {max(x) - min(x)} ), size=15, replace = FALSE)
+
+# Create a dataframe with the results
+data.frame(Range=ranges, row.names = names(ranges))
+```
+
+The code above help us to see the range of some of the variables (n=15) in the training dataset. Since the variables perform on different scales, it is necessary to standardize them to have a more homogeneous dataset, otherwise some variables may get more weight over others. 
+
+```{r scaling the variables}
+# Sacale the training/testing dataset
+training[,-54] <- scale(training[,-54])
+testing[,-54] <- scale(testing[,-54])
+validating <- scale(validating[,-54])
+```
+
+## Training: Random Forest
+
+Since our prediction variable is not numeric, we will need to perform a classification method. `Random forest` is a methods for classification that operate by constructing a multitude of decision trees at training time and outputting the class that is the mode of the classes (classification) of the individual trees.
+
+```{r fitting-model}
+# Crete a control parameters
+controlRF <- trainControl(method="cv", number=3, verboseIter=FALSE)
+
+# Fit the model
+modFitRandForest <- train(classe ~ ., data=training, method="rf", trControl=controlRF)
+modFitRandForest$finalModel
+```
+
+With the model we will use `confusionMatrix` function in order to calculates a cross-tabulation of observed and predicted classes with associated statistics. From the results we can see that the Accuracy of the model is 0.9561 and the Cohen Kappa Coeficient 0.9445.
+
+```{r evaluating-testing set}
+# Evaluating testing dataset with ConfusionMatrix
+RF_prediction <- predict(modFitRandForest, newdata=testing)
+confMatRandForest <- confusionMatrix(RF_prediction, testing$classe)
+confMatRandForest
+```
+
+The prediction for the validating dataset is show below. 
+
+```{r predicting}
+# Predicting the values
+predictValidating <- predict(modFitRandForest, newdata=validating)
+predictValidating
+```
+
